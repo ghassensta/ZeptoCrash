@@ -81,6 +81,7 @@
   .cashout-button{background:linear-gradient(45deg,var(--acc3),#ff6a00);color:#1a0f06}
   .game-button:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 12px 24px rgba(0,0,0,.25)}
   .game-button:disabled{opacity:.55;cursor:not-allowed}
+  button, .quick-bet { touch-action: manipulation; }
 
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px}
   .stat-item{text-align:center;padding:10px;background:rgba(255,255,255,.06);border-radius:10px}
@@ -109,7 +110,25 @@
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0) }
 
   .footer{text-align:center;padding:18px;border-radius:16px}
+
+  /* ===== Mobile polish ===== */
   @media (max-width: 1020px){ .main{grid-template-columns:1fr} }
+  @media (max-width: 780px){
+    .header h1{font-size:1.8rem}
+    .stage{height:360px}
+    .badge{padding:5px 10px}
+  }
+  @media (max-width: 520px){
+    .header h1{font-size:1.6rem}
+    .stage{height:300px}
+    .badge{font-size:.9rem}
+    .chip{font-size:.75rem}
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .last-list{gap:6px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .star, .star.trail{animation-duration:2000ms}
+  }
 </style>
 </head>
 <body>
@@ -130,9 +149,9 @@
               <div class="chip wait" id="statusChip">En attente</div>
             </div>
           </div>
-          <div class="stage">
+          <div class="stage" id="stage">
             <div class="chart">
-              <svg viewBox="0 0 1000 700" preserveAspectRatio="none">
+              <svg id="focusSvg" viewBox="0 0 1000 700" preserveAspectRatio="none">
                 <defs>
                   <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
                     <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="1"/>
@@ -240,6 +259,8 @@ class ZeptoCrashGame {
 
     // DOM
     this.el={
+      svg: document.getElementById('focusSvg'),
+      stage: document.getElementById('stage'),
       path: document.getElementById('curvePath'),
       focusDot: document.getElementById('focusDot'),
       hudMult: document.getElementById('hudMult'), statusChip: document.getElementById('statusChip'),
@@ -261,6 +282,7 @@ class ZeptoCrashGame {
       const chip=e.target.closest('[data-idx]'); if(!chip) return; const idx=parseInt(chip.dataset.idx);
       const it=this.history[idx]; if(!it) return; this.showToast(`${it.won?'✅ Gain':'❌ Perte'} · ${it.multiplier.toFixed(2)}x · ${it.amount} AED`);
     });
+    window.addEventListener('resize', ()=> this.onResize());
 
     // Starfield
     this.starTimer=null; this.lastTrailTime=0; this.pos=null;
@@ -271,11 +293,24 @@ class ZeptoCrashGame {
     // Path length
     this.pathLen = this.el.path.getTotalLength();
 
+    // ViewBox (for robust mapping)
+    const vb = this.el.svg && this.el.svg.viewBox ? this.el.svg.viewBox.baseVal : {x:0,y:0,width:1000,height:700};
+    this.vbW = vb && vb.width ? vb.width : 1000; this.vbH = vb && vb.height ? vb.height : 700;
+
     // Animation loop state (rAF)
     this.loopHandle=0; this.lastFrame=0; this.elapsed=0; this.sProgress=0; this.motionAlpha=0.18;
 
     this.startGameLoop();
     this.startAmbientStars();
+  }
+
+  /* ===== coords mapping from SVG space -> stage CSS pixels ===== */
+  svgPointToStage(pt){
+    const stageRect=this.el.stage.getBoundingClientRect();
+    const svgRect=this.el.svg.getBoundingClientRect();
+    const x = (pt.x/this.vbW) * svgRect.width + (svgRect.left - stageRect.left);
+    const y = (pt.y/this.vbH) * svgRect.height + (svgRect.top - stageRect.top);
+    return {x,y};
   }
 
   /* ===== STARFIELD ===== */
@@ -303,9 +338,11 @@ class ZeptoCrashGame {
     const next=this.el.path.getPointAtLength(Math.min(len+2,this.pathLen));
     const angle=Math.atan2(next.y-pt.y, next.x-pt.x)*180/Math.PI;
     const s=1+Math.min(1,p*1.2);
-    this.el.focusDot.style.transform=`translate(${pt.x-8}px, ${pt.y-8}px)`;
-    if(this.el.focusLight){ this.el.focusLight.style.transform=`translate(${pt.x-130}px, ${pt.y-130}px) scale(${s})`; this.el.focusLight.style.opacity = this.el.focusMode.checked? 1 : 0; }
-    this.pos={x:pt.x, y:pt.y, angle};
+
+    const px=this.svgPointToStage(pt);
+    this.el.focusDot.style.transform=`translate(${px.x-8}px, ${px.y-8}px)`;
+    if(this.el.focusLight){ this.el.focusLight.style.transform=`translate(${px.x-130}px, ${px.y-130}px) scale(${s})`; this.el.focusLight.style.opacity = this.el.focusMode.checked? 1 : 0; }
+    this.pos={x:px.x, y:px.y, angle};
   }
 
   /* ===== Focus Beep (WebAudio) ===== */
@@ -405,7 +442,8 @@ class ZeptoCrashGame {
     // Compute quick records from last 10
     const best= last10.reduce((a,b)=> a.multiplier>b.multiplier?a:b);
     const worst= last10.reduce((a,b)=> a.multiplier<b.multiplier?a:b);
-    const biggestWin = last10.filter(i=>i.won).reduce((a,b)=> (a.amount>b.amount?a:b), last10[0]||{amount:0});
+    const wins = last10.filter(i=>i.won);
+    const biggestWin = wins.length? wins.reduce((a,b)=> (a.amount>b.amount?a:b)) : {amount:0,timestamp:null,won:true};
 
     const rows = [
       {label:'Meilleur x', val: best? best.multiplier.toFixed(2)+'x' : '-', ts: best?.timestamp, won: best?.won},
@@ -430,6 +468,13 @@ class ZeptoCrashGame {
   toggleAutoCashout(){ this.el.autoCashoutValue.disabled=!this.el.autoCashout.checked; }
 
   showToast(txt){ const el=this.el.roundToast; if(!el) return; el.textContent=txt; el.classList.add('show'); clearTimeout(this._toastT); this._toastT=setTimeout(()=> el.classList.remove('show'), 2200); }
+
+  onResize(){ // keep dot/halo aligned after layout change
+    this.pathLen = this.el.path.getTotalLength();
+    const vb = this.el.svg && this.el.svg.viewBox ? this.el.svg.viewBox.baseVal : {x:0,y:0,width:1000,height:700};
+    this.vbW = vb && vb.width ? vb.width : 1000; this.vbH = vb && vb.height ? vb.height : 700;
+    this.positionFocusByProgress(this.sProgress);
+  }
 }
 
 function setBetAmount(v){ document.getElementById('betAmount').value=v; }
@@ -445,10 +490,12 @@ function runSelfTests(g){ try {
   g.positionFocusByProgress(1); console.assert(g.pos && g.pos.x >= 0, 'Test: p>1 clamped');
   const a=easeOutCubic(0.25), b=easeOutCubic(0.5), c=easeOutCubic(0.75); console.assert(a<b && b<c, 'Test: easing monotonic');
   const mm = Math.log(1.5)/Math.log(3); console.assert(mm>0 && mm<1, 'Test: log map range');
+  // bounds test in stage space
+  const rect=g.el.stage.getBoundingClientRect();
+  console.assert(g.pos.x>=0 && g.pos.x<=rect.width && g.pos.y>=0 && g.pos.y<=rect.height, 'Test: focus within stage');
   console.log('%cSelf-tests passed','color:#0f0');
 } catch(e){ console.error('Self-tests failed', e); }
 }
 </script>
 </body>
 </html>
- 
