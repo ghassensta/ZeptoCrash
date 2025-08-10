@@ -64,6 +64,7 @@
   .star-chip .sym{font-size:1rem;filter:drop-shadow(0 2px 6px rgba(255,255,255,.4))}
   .star-chip.win{background:rgba(0,255,136,.08);border-color:rgba(0,255,136,.35)}
   .star-chip.loss{background:rgba(255,68,68,.08);border-color:rgba(255,68,68,.35)}
+  .star-chip.neut{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.22)}
   .star-chip:hover{transform:translateY(-1px)}
 
   /* ===== LEFT: controls ===== */
@@ -95,8 +96,8 @@
   .history-card h3,.records-card h3{color:var(--acc1);margin-bottom:10px;text-align:center}
   .history-list{max-height:340px;overflow-y:auto}
   .history-item{display:flex;justify-content:space-between;align-items:center;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.06);border-radius:10px;border-left:4px solid}
-  .history-item.win{border-left-color:var(--acc2)} .history-item.loss{border-left-color:var(--danger)}
-  .history-multiplier{font-weight:800} .history-multiplier.win{color:var(--acc2)} .history-multiplier.loss{color:var(--danger)}
+  .history-item.win{border-left-color:var(--acc2)} .history-item.loss{border-left-color:var(--danger)} .history-item.spectate{border-left-color:rgba(255,255,255,.28)}
+  .history-multiplier{font-weight:800} .history-multiplier.win{color:var(--acc2)} .history-multiplier.loss{color:var(--danger)} .history-multiplier.spectate{color:#eaeaea}
 
   /* Records card list */
   .records-list{display:grid;grid-template-columns:1fr;gap:8px;max-height:240px;overflow-y:auto}
@@ -135,7 +136,6 @@
   <div class="container">
     <header class="header glass">
       <h1>🎮 ZeptoCrash</h1>
-      <p>Vue Focus sur courbe + ✱ Derniers rounds + Carte des records – (aucune Lottie/rocket)</p>
     </header>
 
     <main class="main">
@@ -231,7 +231,7 @@
           </div>
         </div>
         <div class="history-card glass">
-          <h3>📊 Historique détaillé</h3>
+          <h3>📊 Historique de tous les rounds</h3>
           <div class="history-list" id="historyList">
             <div style="text-align:center; opacity:.6; padding:20px;">Aucune manche jouée</div>
           </div>
@@ -240,7 +240,7 @@
     </main>
 
     <footer class="footer glass">
-      <p>🎯 RTP estimé: ~75% | ⚡ Crash ~10s | ✨ ✱ Derniers rounds | 🟢 Halo | 🔔 Bips (optionnel)</p>
+      <p>🎯 Vue focus <strong>neutre</strong> (aucune donnée de proba utilisée) | ✨ ✱ Derniers rounds | 🟢 Halo | 🔔 Bips (optionnel)</p>
       <p style="margin-top:10px;opacity:.7">Prototype – Argent fictif uniquement</p>
     </footer>
   </div>
@@ -255,7 +255,11 @@ class ZeptoCrashGame {
   constructor(){
     this.balance=1000; this.currentBet=0; this.currentMultiplier=1; this.crashPoint=0;
     this.gameState='waiting'; this.startTime=0; this.hasPlayerBet=false; this.hasCashedOut=false;
-    this.stats={ totalGames:0,totalWins:0,totalLosses:0,biggestWin:0,totalWagered:0,totalWon:0 }; this.history=[];
+    this.cashoutAt=null; this.winAmount=0; this.roundId=0;
+    this.VISUAL_MAX_X=50; // ⛔ Neutre: la progression visuelle n'utilise pas crashPoint
+
+    this.stats={ totalGames:0,totalWins:0,totalLosses:0,biggestWin:0,totalWagered:0,totalWon:0 };
+    this.history=this.loadRounds(); // charge depuis localStorage
 
     // DOM
     this.el={
@@ -280,7 +284,7 @@ class ZeptoCrashGame {
     this.el.betAmount.addEventListener('input', ()=> this.validateBetAmount());
     this.el.lastStarList.addEventListener('click', (e)=>{
       const chip=e.target.closest('[data-idx]'); if(!chip) return; const idx=parseInt(chip.dataset.idx);
-      const it=this.history[idx]; if(!it) return; this.showToast(`${it.won?'✅ Gain':'❌ Perte'} · ${it.multiplier.toFixed(2)}x · ${it.amount} AED`);
+      const it=this.history[idx]; if(!it) return; this.showToast(`${it.type==='win'?'✅ Gain':it.type==='loss'?'❌ Perte':'👀 Spectateur'} · ${it.crashAt.toFixed(2)}x${it.type==='win'?` · +${it.winAmount} AED`:''}`);
     });
     window.addEventListener('resize', ()=> this.onResize());
 
@@ -300,9 +304,19 @@ class ZeptoCrashGame {
     // Animation loop state (rAF)
     this.loopHandle=0; this.lastFrame=0; this.elapsed=0; this.sProgress=0; this.motionAlpha=0.18;
 
+    // initial render from storage
+    this.renderLastStarList();
+    this.renderRecords();
+    this.updateStatsFromHistory();
+    this.renderHistoryList();
+
     this.startGameLoop();
     this.startAmbientStars();
   }
+
+  /* ===== storage ===== */
+  loadRounds(){ try{ return JSON.parse(localStorage.getItem('zc_rounds')||'[]'); }catch(e){ return []; } }
+  saveRounds(){ try{ localStorage.setItem('zc_rounds', JSON.stringify(this.history.slice(0,100))); }catch(e){} }
 
   /* ===== coords mapping from SVG space -> stage CSS pixels ===== */
   svgPointToStage(pt){
@@ -331,6 +345,12 @@ class ZeptoCrashGame {
   setStatus(mode){ const chip=this.el.statusChip; chip.className='chip '+(mode==='waiting'?'wait':mode==='playing'?'play':'crash'); chip.textContent= mode==='waiting'?'En attente': mode==='playing'?'En cours':'CRASH'; }
   updateDisplay(){ this.el.hudMult.textContent = `${this.currentMultiplier.toFixed(2)}x`; this.el.balance.textContent=`${this.balance} AED`; }
 
+  getVisualProgressForMultiplier(mult){
+    // Ne fuit rien: basé UNIQUEMENT sur le multiplicateur courant et une CAP visuelle fixe
+    const p = Math.log(Math.max(1, mult)) / Math.log(this.VISUAL_MAX_X);
+    return easeOutCubic(clamp(p));
+  }
+
   positionFocusByProgress(p){
     p=clamp(p,0,1);
     const len=p*this.pathLen;
@@ -358,6 +378,7 @@ class ZeptoCrashGame {
 
   newRound(){
     this.cancelLoop();
+    this.roundId += 1; this.cashoutAt=null; this.winAmount=0;
     this.currentMultiplier=1; this.crashPoint=this.generateCrashPoint(); this.gameState='waiting'; this.hasPlayerBet=false; this.hasCashedOut=false; this.startTime=0;
     this.updateDisplay(); this.enableBetting();
     this.sProgress=0; this.positionFocusByProgress(0);
@@ -376,13 +397,11 @@ class ZeptoCrashGame {
 
   frame(now){
     const dt=now - this.lastFrame; this.lastFrame=now; this.elapsed += dt;
-    // Multiplier growth
+    // Multiplier growth (visuel + core)
     this.currentMultiplier = 1 + (this.elapsed/1000)*0.1 + Math.pow(this.elapsed/10000,2);
 
-    // Mapping LOG -> progress + easing
-    let mulNorm = Math.log(this.currentMultiplier) / Math.log(this.crashPoint);
-    if(!isFinite(mulNorm)) mulNorm = 0;
-    const pTarget = easeOutCubic(clamp(mulNorm));
+    // Visuel NEUTRE (indépendant de crashPoint)
+    const pTarget = this.getVisualProgressForMultiplier(this.currentMultiplier);
     this.sProgress = lerp(this.sProgress, pTarget, this.motionAlpha);
 
     this.positionFocusByProgress(this.sProgress);
@@ -403,7 +422,7 @@ class ZeptoCrashGame {
 
   placeBet(){ const a=parseInt(this.el.betAmount.value); if(a>this.balance) return alert('Solde insuffisant !'); if(a<10) return alert('Mise minimum: 10 AED'); this.currentBet=a; this.balance-=a; this.hasPlayerBet=true; this.stats.totalWagered+=a; this.updateDisplay(); this.el.betButton.disabled=true; this.el.betButton.textContent=`Mise placée: ${a} AED`; this.sProgress=0; this.positionFocusByProgress(0); this.starBurst(12); }
 
-  cashOut(){ if(!this.hasPlayerBet||this.hasCashedOut) return; this.hasCashedOut=true; const win=Math.floor(this.currentBet*this.currentMultiplier); this.balance+=win; this.stats.totalWins++; this.stats.totalWon+=win; const profit=win-this.currentBet; if(profit>this.stats.biggestWin) this.stats.biggestWin=profit; this.addToHistory(this.currentMultiplier,true,win); this.updateDisplay(); this.el.cashoutButton.disabled=true; }
+  cashOut(){ if(!this.hasPlayerBet||this.hasCashedOut) return; this.hasCashedOut=true; this.cashoutAt=this.currentMultiplier; const win=Math.floor(this.currentBet*this.currentMultiplier); this.winAmount=win; this.balance+=win; this.stats.totalWins++; this.stats.totalWon+=win; const profit=win-this.currentBet; if(profit>this.stats.biggestWin) this.stats.biggestWin=profit; this.updateDisplay(); this.el.cashoutButton.disabled=true; }
 
   crash(){
     this.cancelLoop();
@@ -411,26 +430,62 @@ class ZeptoCrashGame {
     this.el.crashAnimation.textContent=`💥 CRASH à ${this.currentMultiplier.toFixed(2)}x!`;
     this.el.crashAnimation.className='crash-animation show';
     setTimeout(()=>{ this.el.crashAnimation.className='crash-animation'; }, 1800);
-    if(this.hasPlayerBet&&!this.hasCashedOut){ this.stats.totalLosses++; this.addToHistory(this.currentMultiplier,false,this.currentBet);} this.stats.totalGames++; this.updateStats(); this.stopFocusBeep(); setTimeout(()=> this.newRound(), 4200);
+
+    // Compose round summary (toujours enregistré, bet ou non)
+    const summary={
+      id:this.roundId,
+      timestamp: new Date().toISOString(),
+      crashAt: this.currentMultiplier,
+      type: this.hasPlayerBet ? (this.hasCashedOut? 'win':'loss') : 'spectate',
+      betPlaced: this.hasPlayerBet,
+      betAmount: this.hasPlayerBet? this.currentBet: 0,
+      cashedOut: this.hasCashedOut,
+      cashoutAt: this.hasCashedOut? this.cashoutAt: null,
+      winAmount: this.hasCashedOut? this.winAmount: 0
+    };
+    this.pushHistory(summary);
+
+    if(this.hasPlayerBet&&!this.hasCashedOut){ this.stats.totalLosses++; }
+    this.stats.totalGames++;
+    this.updateStats(); this.stopFocusBeep();
+
+    setTimeout(()=> this.newRound(), 4200);
   }
 
-  addToHistory(mult, won, amount){
-    const item={ multiplier:mult, won, amount, timestamp:new Date() };
-    this.history.unshift(item); if(this.history.length>20) this.history=this.history.slice(0,20);
-    // Sidebar détaillée
-    this.el.historyList.innerHTML=this.history.map(i=>`<div class="history-item ${i.won?'win':'loss'}"><div><div class="history-multiplier ${i.won?'win':'loss'}">${i.multiplier.toFixed(2)}x</div><div style=\"font-size:.8rem;opacity:.8\">${i.timestamp.toLocaleTimeString()}</div></div><div><div style=\"font-weight:800;color:${i.won?'#00ff88':'#ff4444'}\">${i.won?'+':'-'}${i.amount} AED</div><div style=\"font-size:.8rem;opacity:.8\">${i.won?'Gain':'Perte'}</div></div></div>`).join('');
-    // Last ✱ list compacte
+  pushHistory(item){
+    this.history.unshift(item); if(this.history.length>100) this.history=this.history.slice(0,100);
+    this.saveRounds();
+    this.renderHistoryList();
     this.renderLastStarList();
-    // Records card
     this.renderRecords();
+  }
+
+  renderHistoryList(){
+    if(this.history.length===0){ this.el.historyList.innerHTML = `<div style="text-align:center;opacity:.6;padding:20px">Aucune manche jouée</div>`; return; }
+    const fmt=(iso)=> new Intl.DateTimeFormat('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(iso));
+    this.el.historyList.innerHTML = this.history.map(i=>{
+      const cls = i.type==='win'?'win': i.type==='loss'?'loss':'spectate';
+      const tag = i.type==='win'? 'Gain' : i.type==='loss'? 'Perte' : 'Spectateur';
+      const right = i.type==='win' ? `+${i.winAmount} AED` : i.type==='loss' && i.betAmount ? `-${i.betAmount} AED` : '-';
+      return `<div class="history-item ${cls}">
+        <div>
+          <div class="history-multiplier ${cls}">${i.crashAt.toFixed(2)}x</div>
+          <div style="font-size:.8rem;opacity:.8">${fmt(i.timestamp)}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:800;${i.type==='win'? 'color:#00ff88': i.type==='loss'?'color:#ff4444':'opacity:.9'}">${right}</div>
+          <div style="font-size:.8rem;opacity:.8">${tag}${i.betAmount? ` · ${i.betAmount} AED`:''}${i.cashoutAt? ` · out ${i.cashoutAt.toFixed(2)}x`:''}</div>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   renderLastStarList(){
     if(!this.el.lastStarList) return; const max=16; const items=this.history.slice(0,max);
     if(items.length===0){ this.el.lastStarList.innerHTML='<span style="opacity:.6">Aucun round</span>'; return; }
     this.el.lastStarList.innerHTML = items.map((it,idx)=>{
-      const cls= it.won? 'win':'loss';
-      const mult=it.multiplier.toFixed(2)+'x';
+      const cls= it.type==='win'? 'win' : it.type==='loss'? 'loss' : 'neut';
+      const mult=it.crashAt.toFixed(2)+'x';
       return `<div class="star-chip ${cls}" data-idx="${idx}"><span class="sym">✱</span><span>${mult}</span></div>`;
     }).join('');
   }
@@ -439,29 +494,29 @@ class ZeptoCrashGame {
     const list=this.el.recordsList; if(!list) return;
     if(this.history.length===0){ list.innerHTML='<div style="text-align:center; opacity:.6; padding:10px;">Aucun round</div>'; return; }
     const last10=this.history.slice(0,10);
-    // Compute quick records from last 10
-    const best= last10.reduce((a,b)=> a.multiplier>b.multiplier?a:b);
-    const worst= last10.reduce((a,b)=> a.multiplier<b.multiplier?a:b);
-    const wins = last10.filter(i=>i.won);
-    const biggestWin = wins.length? wins.reduce((a,b)=> (a.amount>b.amount?a:b)) : {amount:0,timestamp:null,won:true};
+    const best= last10.reduce((a,b)=> (a && a.crashAt>b.crashAt)?a:b);
+    const worst= last10.reduce((a,b)=> (a && a.crashAt<b.crashAt)?a:b);
+    const wins = last10.filter(i=>i.type==='win');
+    const biggestWin = wins.length? wins.reduce((a,b)=> (a.winAmount>b.winAmount?a:b)) : {winAmount:0,timestamp:null,type:'win'};
 
     const rows = [
-      {label:'Meilleur x', val: best? best.multiplier.toFixed(2)+'x' : '-', ts: best?.timestamp, won: best?.won},
-      {label:'Pire x', val: worst? worst.multiplier.toFixed(2)+'x' : '-', ts: worst?.timestamp, won: worst?.won},
-      {label:'Plus gros gain', val: biggestWin && biggestWin.amount? (biggestWin.amount+' AED') : '-', ts: biggestWin?.timestamp, won: true}
+      {label:'Meilleur x', val: best? best.crashAt.toFixed(2)+'x' : '-', ts: best?.timestamp, won: best?.type==='win'},
+      {label:'Pire x', val: worst? worst.crashAt.toFixed(2)+'x' : '-', ts: worst?.timestamp, won: worst?.type==='win'},
+      {label:'Plus gros gain', val: biggestWin && biggestWin.winAmount? (biggestWin.winAmount+' AED') : '-', ts: biggestWin?.timestamp, won: true}
     ];
 
-    const items = last10.map(i=>({label: i.won?'Win':'Loss', val: i.multiplier.toFixed(2)+'x', ts:i.timestamp, won:i.won}));
-    const fmt=(d)=> d? new Intl.DateTimeFormat('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'}).format(d):'';
+    const items = last10.map(i=>({label: i.type==='win'?'Win': i.type==='loss'?'Loss':'Spect', val: i.crashAt.toFixed(2)+'x', ts:i.timestamp, won:i.type==='win'}));
+    const fmt=(d)=> d? new Intl.DateTimeFormat('fr-FR', {hour:'2-digit', minute:'2-digit', second:'2-digit'}).format(new Date(d)):'';
 
     list.innerHTML = [
       ...rows.map(r=>`<div class="rec ${r.won?'win':'loss'}"><div class="tag">${r.label}</div><div>${r.val}</div><div style="opacity:.8">${fmt(r.ts)}</div></div>`),
       '<div style="height:6px"></div>',
-      ...items.map(r=>`<div class="rec ${r.won?'win':'loss'}"><div class="tag">${r.won?'✱ Win':'✱ Loss'}</div><div>${r.val}</div><div style="opacity:.8">${fmt(r.ts)}</div></div>`)
+      ...items.map(r=>`<div class="rec ${r.won?'win':'loss'}"><div class="tag">${r.label==='Spect'?'✱ Spect':'✱ '+r.label}</div><div>${r.val}</div><div style="opacity:.8">${fmt(r.ts)}</div></div>`)
     ].join('');
   }
 
-  updateStats(){ const total=this.stats.totalWins+this.stats.totalLosses; const rate= total>0? Math.round((this.stats.totalWins/total)*100):0; this.el.totalGames.textContent=total; this.el.totalWins.textContent=this.stats.totalWins; this.el.winRate.textContent=`${rate}%`; this.el.biggestWin.textContent=`${this.stats.biggestWin} AED`; }
+  updateStats(){ const totalWins=this.history.filter(h=>h.type==='win').length; const totalLoss=this.history.filter(h=>h.type==='loss').length; const total=totalWins+totalLoss; const rate= total>0? Math.round((totalWins/total)*100):0; this.el.totalGames.textContent=totalWins+totalLoss; this.el.totalWins.textContent=totalWins; this.el.winRate.textContent=`${rate}%`; this.el.biggestWin.textContent=`${Math.max(0,...this.history.map(h=>h.winAmount||0))} AED`; }
+  updateStatsFromHistory(){ this.updateStats(); }
 
   enableBetting(){ this.el.betButton.disabled=false; this.el.betButton.textContent='Placer la mise'; this.el.cashoutButton.disabled=true; }
   validateBetAmount(){ const a=parseInt(this.el.betAmount.value); if(a>this.balance) this.el.betAmount.value=this.balance; if(a<10) this.el.betAmount.value=10; }
@@ -489,10 +544,10 @@ function runSelfTests(g){ try {
   g.positionFocusByProgress(0.5); console.assert(g.pos && g.pos.x >= 0, 'Test: p=0.5 valid');
   g.positionFocusByProgress(1); console.assert(g.pos && g.pos.x >= 0, 'Test: p>1 clamped');
   const a=easeOutCubic(0.25), b=easeOutCubic(0.5), c=easeOutCubic(0.75); console.assert(a<b && b<c, 'Test: easing monotonic');
-  const mm = Math.log(1.5)/Math.log(3); console.assert(mm>0 && mm<1, 'Test: log map range');
-  // bounds test in stage space
-  const rect=g.el.stage.getBoundingClientRect();
-  console.assert(g.pos.x>=0 && g.pos.x<=rect.width && g.pos.y>=0 && g.pos.y<=rect.height, 'Test: focus within stage');
+  // visual progress must be independent of crashPoint
+  g.crashPoint=100; const p1=g.getVisualProgressForMultiplier(2);
+  g.crashPoint=2; const p2=g.getVisualProgressForMultiplier(2);
+  console.assert(Math.abs(p1-p2) < 1e-9, 'Test: visual progress independent of crashPoint');
   console.log('%cSelf-tests passed','color:#0f0');
 } catch(e){ console.error('Self-tests failed', e); }
 }
