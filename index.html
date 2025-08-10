@@ -93,6 +93,10 @@
   .balance-card,.history-card,.records-card{border-radius:16px;padding:18px}
   .balance-card h2{color:var(--acc1);margin-bottom:8px;text-align:center}
   .balance-amount{font-size:2rem;font-weight:900;text-align:center;color:var(--acc2);text-shadow:0 0 18px rgba(0,255,136,.4)}
+  .balance-delta{height:22px;text-align:center;font-weight:900;margin-top:6px}
+  .balance-delta.plus{color:#00ff88}
+  .balance-delta.minus{color:#ff6a6a}
+
   .history-card h3,.records-card h3{color:var(--acc1);margin-bottom:10px;text-align:center}
   .history-list{max-height:340px;overflow-y:auto}
   .history-item{display:flex;justify-content:space-between;align-items:center;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.06);border-radius:10px;border-left:4px solid}
@@ -110,6 +114,24 @@
   .toast{ position:absolute; left:50%; bottom:70px; transform:translateX(-50%) translateY(20px); opacity:0; padding:10px 14px; border-radius:10px; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.2); backdrop-filter:blur(8px); transition:opacity .2s, transform .2s; font-weight:700 }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(0) }
 
+  /* ===== Modals (Win/Lose) ===== */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;visibility:hidden;transition:.25s}
+  .modal-overlay.show{opacity:1;visibility:visible}
+  .modal{background:linear-gradient(145deg, rgba(255,255,255,.16), rgba(255,255,255,.07));border-radius:22px;padding:28px;text-align:center;border:2px solid rgba(255,255,255,.28);max-width:420px;width:92%;transform:scale(.8) translateY(20px);transition:.3s cubic-bezier(.34,1.56,.64,1)}
+  .modal-overlay.show .modal{transform:scale(1) translateY(0)}
+  .modal.win{box-shadow:0 20px 44px rgba(0,255,136,.22)}
+  .modal.lose{box-shadow:0 20px 44px rgba(255,68,68,.22)}
+  .modal h2{font-size:2rem;margin-bottom:6px}
+  .modal h2.win{color:var(--acc2)}
+  .modal h2.lose{color:var(--danger)}
+  .modal .amount{font-size:1.8rem;font-weight:900;margin:12px 0}
+  .modal .amount.win{color:var(--acc2)}
+  .modal .amount.lose{color:var(--danger)}
+  .modal .details{background:rgba(255,255,255,.08);border-radius:14px;padding:12px;margin-bottom:14px}
+  .details .row{display:flex;justify-content:space-between;margin:6px 0}
+  .details .row:last-child{font-weight:800;color:var(--acc1);border-top:1px solid rgba(255,255,255,.2);padding-top:8px;margin-top:6px}
+  .modal .close{background:linear-gradient(45deg,#666,#888);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-weight:800;cursor:pointer}
+
   .footer{text-align:center;padding:18px;border-radius:16px}
 
   /* ===== Mobile polish ===== */
@@ -126,6 +148,7 @@
     .chip{font-size:.75rem}
     .stats{grid-template-columns:repeat(2,1fr)}
     .last-list{gap:6px}
+    .panel{padding:14px}
   }
   @media (prefers-reduced-motion: reduce){
     .star, .star.trail{animation-duration:2000ms}
@@ -223,6 +246,7 @@
         <div class="balance-card glass">
           <h2>💳 Solde</h2>
           <div class="balance-amount" id="balance">1000 AED</div>
+          <div class="balance-delta" id="balanceDelta"></div>
         </div>
         <div class="records-card glass">
           <h3>📜 Records – Derniers rounds</h3>
@@ -243,6 +267,38 @@
       <p>🎯 Vue focus <strong>neutre</strong> (aucune donnée de proba utilisée) | ✨ ✱ Derniers rounds | 🟢 Halo | 🔔 Bips (optionnel)</p>
       <p style="margin-top:10px;opacity:.7">Prototype – Argent fictif uniquement</p>
     </footer>
+  </div>
+
+  <!-- WIN MODAL -->
+  <div class="modal-overlay" id="winModal">
+    <div class="modal win">
+      <div style="font-size:2.4rem">🎉</div>
+      <h2 class="win">Félicitations !</h2>
+      <p>Encaissement réussi.</p>
+      <div class="amount win" id="winAmount">+250 AED</div>
+      <div class="details">
+        <div class="row"><span>Mise</span><span id="winBet">—</span></div>
+        <div class="row"><span>Multiplicateur</span><span id="winMult">—</span></div>
+        <div class="row"><span>Gain total</span><span id="winTotal">—</span></div>
+      </div>
+      <button class="close" onclick="closeModal('winModal')">Continuer</button>
+    </div>
+  </div>
+
+  <!-- LOSE MODAL -->
+  <div class="modal-overlay" id="loseModal">
+    <div class="modal lose">
+      <div style="font-size:2.4rem">💥</div>
+      <h2 class="lose">Dommage…</h2>
+      <p>Le crash est arrivé trop tôt.</p>
+      <div class="amount lose" id="loseAmount">-100 AED</div>
+      <div class="details">
+        <div class="row"><span>Mise</span><span id="loseBet">—</span></div>
+        <div class="row"><span>Crash à</span><span id="loseAt">—</span></div>
+        <div class="row"><span>Perte</span><span id="loseTotal">—</span></div>
+      </div>
+      <button class="close" onclick="closeModal('loseModal')">Réessayer</button>
+    </div>
   </div>
 
 <script>
@@ -268,7 +324,8 @@ class ZeptoCrashGame {
       path: document.getElementById('curvePath'),
       focusDot: document.getElementById('focusDot'),
       hudMult: document.getElementById('hudMult'), statusChip: document.getElementById('statusChip'),
-      balance: document.getElementById('balance'), betAmount: document.getElementById('betAmount'), betButton: document.getElementById('betButton'),
+      balance: document.getElementById('balance'), balanceDelta: document.getElementById('balanceDelta'),
+      betAmount: document.getElementById('betAmount'), betButton: document.getElementById('betButton'),
       cashoutButton: document.getElementById('cashoutButton'), autoCashout: document.getElementById('autoCashout'), autoCashoutValue: document.getElementById('autoCashoutValue'),
       historyList: document.getElementById('historyList'), crashAnimation: document.getElementById('crashAnimation'),
       totalGames: document.getElementById('totalGames'), totalWins: document.getElementById('totalWins'), winRate: document.getElementById('winRate'), biggestWin: document.getElementById('biggestWin'),
@@ -287,6 +344,10 @@ class ZeptoCrashGame {
       const it=this.history[idx]; if(!it) return; this.showToast(`${it.type==='win'?'✅ Gain':it.type==='loss'?'❌ Perte':'👀 Spectateur'} · ${it.crashAt.toFixed(2)}x${it.type==='win'?` · +${it.winAmount} AED`:''}`);
     });
     window.addEventListener('resize', ()=> this.onResize());
+
+    // Close modals by outside click / ESC
+    document.addEventListener('click',(e)=>{ if(e.target.classList && e.target.classList.contains('modal-overlay')) e.target.classList.remove('show'); });
+    document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'){ document.querySelectorAll('.modal-overlay.show').forEach(m=>m.classList.remove('show')); }});
 
     // Starfield
     this.starTimer=null; this.lastTrailTime=0; this.pos=null;
@@ -344,6 +405,7 @@ class ZeptoCrashGame {
   /* ===== UI ===== */
   setStatus(mode){ const chip=this.el.statusChip; chip.className='chip '+(mode==='waiting'?'wait':mode==='playing'?'play':'crash'); chip.textContent= mode==='waiting'?'En attente': mode==='playing'?'En cours':'CRASH'; }
   updateDisplay(){ this.el.hudMult.textContent = `${this.currentMultiplier.toFixed(2)}x`; this.el.balance.textContent=`${this.balance} AED`; }
+  showBalanceDelta(text,type){ const d=this.el.balanceDelta; if(!d) return; d.textContent=text; d.className='balance-delta '+(type||''); d.animate([{opacity:0, transform:'translateY(6px)'},{opacity:1, transform:'translateY(0)'},{opacity:0.9}],{duration:250}); setTimeout(()=>{ d.textContent=''; d.className='balance-delta'; },2200); }
 
   getVisualProgressForMultiplier(mult){
     // Ne fuit rien: basé UNIQUEMENT sur le multiplicateur courant et une CAP visuelle fixe
@@ -420,9 +482,9 @@ class ZeptoCrashGame {
 
   cancelLoop(){ if(this.loopHandle){ cancelAnimationFrame(this.loopHandle); this.loopHandle=0; } }
 
-  placeBet(){ const a=parseInt(this.el.betAmount.value); if(a>this.balance) return alert('Solde insuffisant !'); if(a<10) return alert('Mise minimum: 10 AED'); this.currentBet=a; this.balance-=a; this.hasPlayerBet=true; this.stats.totalWagered+=a; this.updateDisplay(); this.el.betButton.disabled=true; this.el.betButton.textContent=`Mise placée: ${a} AED`; this.sProgress=0; this.positionFocusByProgress(0); this.starBurst(12); }
+  placeBet(){ const a=parseInt(this.el.betAmount.value); if(a>this.balance) return alert('Solde insuffisant !'); if(a<10) return alert('Mise minimum: 10 AED'); this.currentBet=a; this.balance-=a; this.showBalanceDelta(`−${a} AED`,'minus'); this.hasPlayerBet=true; this.stats.totalWagered+=a; this.updateDisplay(); this.el.betButton.disabled=true; this.el.betButton.textContent=`Mise placée: ${a} AED`; this.sProgress=0; this.positionFocusByProgress(0); this.starBurst(12); }
 
-  cashOut(){ if(!this.hasPlayerBet||this.hasCashedOut) return; this.hasCashedOut=true; this.cashoutAt=this.currentMultiplier; const win=Math.floor(this.currentBet*this.currentMultiplier); this.winAmount=win; this.balance+=win; this.stats.totalWins++; this.stats.totalWon+=win; const profit=win-this.currentBet; if(profit>this.stats.biggestWin) this.stats.biggestWin=profit; this.updateDisplay(); this.el.cashoutButton.disabled=true; }
+  cashOut(){ if(!this.hasPlayerBet||this.hasCashedOut) return; this.hasCashedOut=true; this.cashoutAt=this.currentMultiplier; const win=Math.floor(this.currentBet*this.currentMultiplier); this.winAmount=win; this.balance+=win; this.showBalanceDelta(`+${win} AED`,'plus'); this.stats.totalWins++; this.stats.totalWon+=win; const profit=win-this.currentBet; if(profit>this.stats.biggestWin) this.stats.biggestWin=profit; this.updateDisplay(); this.el.cashoutButton.disabled=true; this.showWinModal(this.currentBet, this.cashoutAt, win); }
 
   crash(){
     this.cancelLoop();
@@ -445,11 +507,27 @@ class ZeptoCrashGame {
     };
     this.pushHistory(summary);
 
-    if(this.hasPlayerBet&&!this.hasCashedOut){ this.stats.totalLosses++; }
+    if(this.hasPlayerBet&&!this.hasCashedOut){ this.stats.totalLosses++; this.showBalanceDelta(`−${this.currentBet} AED`,'minus'); this.showLoseModal(this.currentBet, this.currentMultiplier); }
     this.stats.totalGames++;
     this.updateStats(); this.stopFocusBeep();
 
     setTimeout(()=> this.newRound(), 4200);
+  }
+
+  /* ===== Modals ===== */
+  showWinModal(bet,mult,win){
+    document.getElementById('winBet').textContent = `${bet} AED`;
+    document.getElementById('winMult').textContent = `${mult.toFixed(2)}x`;
+    document.getElementById('winAmount').textContent = `+${win} AED`;
+    document.getElementById('winTotal').textContent = `${win} AED`;
+    document.getElementById('winModal').classList.add('show');
+  }
+  showLoseModal(bet,crashAt){
+    document.getElementById('loseBet').textContent = `${bet} AED`;
+    document.getElementById('loseAt').textContent = `${crashAt.toFixed(2)}x`;
+    document.getElementById('loseAmount').textContent = `-${bet} AED`;
+    document.getElementById('loseTotal').textContent = `${bet} AED`;
+    document.getElementById('loseModal').classList.add('show');
   }
 
   pushHistory(item){
@@ -533,6 +611,7 @@ class ZeptoCrashGame {
 }
 
 function setBetAmount(v){ document.getElementById('betAmount').value=v; }
+function closeModal(id){ const el=document.getElementById(id); if(el) el.classList.remove('show'); }
 let game; window.addEventListener('load', ()=>{ game=new ZeptoCrashGame(); runSelfTests(game); });
 
 /* ======== Self-tests (basic invariants + motion) ======== */
